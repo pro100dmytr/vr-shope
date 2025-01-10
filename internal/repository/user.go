@@ -29,8 +29,8 @@ func NewUserStorage(cfg *config.Config) (*UserRepository, error) {
 }
 
 func (r *UserRepository) Create(ctx context.Context, userRepo *repositories.User) error {
-	query := `INSERT INTO users (id, login, name, last_name, phone_number, password, email) 
-			  VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
+	query := `INSERT INTO users (id, login, name, last_name, phone_number, password, email, salt) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
 
 	err := r.db.QueryRowContext(ctx, query,
 		userRepo.ID,
@@ -40,6 +40,7 @@ func (r *UserRepository) Create(ctx context.Context, userRepo *repositories.User
 		userRepo.PhoneNumber,
 		userRepo.Password,
 		userRepo.Email,
+		userRepo.Salt,
 	).Scan(&userRepo.ID)
 	if err != nil {
 		return err
