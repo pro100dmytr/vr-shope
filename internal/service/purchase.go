@@ -7,7 +7,7 @@ import (
 	"time"
 	"vr-shope/internal/models"
 	"vr-shope/internal/repository"
-	"vr-shope/internal/utils/uuids"
+	"vr-shope/internal/uuids"
 )
 
 type PurchaseService struct {

@@ -1,13 +1,22 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
+	"regexp"
 	"strconv"
+	"time"
 	"vr-shope/internal/models"
 	"vr-shope/internal/repository"
-	"vr-shope/internal/utils"
-	"vr-shope/internal/utils/uuids"
+	"vr-shope/internal/uuids"
+
+	"github.com/golang-jwt/jwt/v4"
 )
 
 type UserService struct {
@@ -18,14 +27,84 @@ func NewUserService(repo *repository.UserStorage) *UserService {
 	return &UserService{repo}
 }
 
+var secretKey = []byte("sfbwm37c7gd7c")
+
+func GenerateToken(userID int) (string, error) {
+	claims := jwt.MapClaims{
+		"user_id": userID,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(secretKey)
+}
+
+func generateSalt() ([]byte, error) {
+	salt := make([]byte, 16)
+	_, err := io.ReadFull(rand.Reader, salt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate salt: %w", err)
+	}
+	return salt, nil
+}
+
+func HashPassword(password string) (string, string, error) {
+	salt, err := generateSalt()
+	if err != nil {
+		return "", "", err
+	}
+
+	hash := sha256.New()
+	hash.Write(salt)
+	hash.Write([]byte(password))
+	hashedPassword := hash.Sum(nil)
+
+	return hex.EncodeToString(hashedPassword), hex.EncodeToString(salt), nil
+}
+
+func CheckPassword(password, storedHash, storedSalt string) (bool, error) {
+	storedHashBytes, err := hex.DecodeString(storedHash)
+	if err != nil {
+		return false, fmt.Errorf("failed to decode stored hash: %w", err)
+	}
+
+	storedSaltBytes, err := hex.DecodeString(storedSalt)
+	if err != nil {
+		return false, fmt.Errorf("failed to decode stored salt: %w", err)
+	}
+
+	hash := sha256.New()
+	hash.Write(storedSaltBytes)
+	hash.Write([]byte(password))
+	computedHash := hash.Sum(nil)
+
+	return bytes.Equal(computedHash, storedHashBytes), nil
+}
+
+func IsValidEmail(email string) bool {
+	const emailRegex = `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
+	re := regexp.MustCompile(emailRegex)
+	return re.MatchString(email)
+}
+
+func ValidateUser(user *models.User) error {
+	if user.Login == "" {
+		return errors.New("login is required")
+	}
+	if user.Password == "" {
+		return errors.New("password is required")
+	}
+	return nil
+}
+
 func (s *UserService) CreateUser(ctx context.Context, userServ *models.User) error {
-	err := utils.ValidateUser(userServ)
+	err := ValidateUser(userServ)
 	if err != nil {
 		return err
 	}
 
 	var email string = userServ.Email
-	em := utils.IsValidEmail(email)
+	em := IsValidEmail(email)
 	if !em {
 		return fmt.Errorf("invalid email: %s", email)
 	}
@@ -38,7 +117,7 @@ func (s *UserService) CreateUser(ctx context.Context, userServ *models.User) err
 		return fmt.Errorf("user with this email already exists")
 	}
 
-	hashedPassword, salt, err := utils.HashPassword(userServ.Password)
+	hashedPassword, salt, err := HashPassword(userServ.Password)
 	if err != nil {
 		return err
 	}
@@ -126,13 +205,13 @@ func (s *UserService) Update(ctx context.Context, userServ *models.User) error {
 		return fmt.Errorf("user not found")
 	}
 
-	err = utils.ValidateUser(userServ)
+	err = ValidateUser(userServ)
 	if err != nil {
 		return err
 	}
 
 	email := userServ.Email
-	em := utils.IsValidEmail(email)
+	em := IsValidEmail(email)
 	if !em {
 		return fmt.Errorf("invalid email: %s", email)
 	}
@@ -178,7 +257,7 @@ func (s *UserService) GetByEmail(ctx context.Context, email string) (*models.Use
 		return nil, fmt.Errorf("email is empty")
 	}
 
-	em := utils.IsValidEmail(email)
+	em := IsValidEmail(email)
 	if !em {
 		return nil, fmt.Errorf("invalid email: %s", email)
 	}
@@ -220,12 +299,12 @@ func (s *UserService) GetToken(ctx context.Context, login string, password strin
 		return "", err
 	}
 
-	isValidPassword, err := utils.CheckPassword(password, user.Password, user.Salt)
+	isValidPassword, err := CheckPassword(password, user.Password, user.Salt)
 	if err != nil || !isValidPassword {
 		return "", fmt.Errorf("invalid password")
 	}
 
-	token, err := utils.GenerateToken(int(uuids.UUIDToInt(user.ID)))
+	token, err := GenerateToken(int(uuids.UUIDToInt(user.ID)))
 	if err != nil {
 		return "", err
 	}
