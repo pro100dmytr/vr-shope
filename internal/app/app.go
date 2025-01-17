@@ -2,104 +2,112 @@ package app
 
 import (
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"log/slog"
 	"os"
-	config2 "vr-shope/internal/config"
+	"vr-shope/internal/config"
 	"vr-shope/internal/handler/product"
 	"vr-shope/internal/handler/purchase"
 	"vr-shope/internal/handler/user"
 	"vr-shope/internal/middleware"
 	"vr-shope/internal/repository"
 	"vr-shope/internal/service"
+	"vr-shope/internal/storage/postgresql"
+
+	"github.com/gin-gonic/gin"
 )
 
-func Run(config string) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-
-	cfg, err := config2.LoadConfig(config)
+func Run(configPath string) error {
+	serverCfg, dbCfg, loggerCfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		logger.Error("Error loading config", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	userStorage, err := repository.NewUserStorage(cfg)
+	var level slog.Level
+	switch loggerCfg.LogLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelDebug
+	}
+
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: level,
+	})
+	logger := slog.New(handler)
+
+	db, err := postgresql.OpenConnection(dbCfg)
+	if err != nil {
+		logger.Error("Error creating database connection", slog.Any("error", err))
+		return fmt.Errorf("failed to create database connection: %w", err)
+	}
+	defer db.Close()
+
+	userStorage, err := repository.NewUserStorage(db)
 	if err != nil {
 		logger.Error("Error creating user storage", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to create user storage: %w", err)
 	}
-
-	defer userStorage.Close()
 
 	userService := service.NewUserService(userStorage)
 	userHandler := user.NewHandler(userService, logger)
 
-	purchaseStorage, err := repository.NewPurchaseStorage(cfg)
+	productStorage, err := repository.NewProductStorage(db)
 	if err != nil {
-		logger.Error("Error creating purchase storage", slog.Any("error", err))
-		os.Exit(1)
+		logger.Error("Error creating track storage", slog.Any("error", err))
+		return fmt.Errorf("failed to create track storage: %w", err)
 	}
-
-	defer purchaseStorage.Close()
-
-	purchaseService := service.NewPurchaseService(purchaseStorage)
-	purchaseHandler := purchase.NewHandler(purchaseService, logger)
-
-	productStorage, err := repository.NewProductStorage(cfg)
-	if err != nil {
-		logger.Error("Error creating product storage", slog.Any("error", err))
-		os.Exit(1)
-	}
-
-	defer productStorage.Close()
 
 	productService := service.NewProductService(productStorage)
 	productHandler := product.NewHandler(productService, logger)
 
+	purchaseStorage, err := repository.NewPurchaseStorage(db)
+	if err != nil {
+		logger.Error("Error creating playlist storage", slog.Any("error", err))
+		return fmt.Errorf("failed to create playlist storage: %w", err)
+	}
+
+	purchaseService := service.NewPurchaseService(purchaseStorage)
+	purchaseHandler := purchase.NewHandler(purchaseService, logger)
+
 	router := gin.Default()
 
+	router.POST("/users/create", userHandler.CreateUser())
+	router.POST("/product/create", productHandler.CreateProduct())
+	router.POST("/purchase/create", purchaseHandler.CreatePurchase())
 	router.POST("/users/login", userHandler.Login())
 
-	userRoutes := router.Group("/api")
-	userRoutes.Use(middleware.AuthMiddleware())
+	Routes := router.Group("/api/v1")
+	Routes.Use(middleware.AuthMiddleware())
 	{
-		userRoutes.GET("/users", userHandler.GetAllUsers())
-		userRoutes.GET("/users/:id", userHandler.GetUserByID())
-		userRoutes.GET("/users?email=<email>", userHandler.GetUserByEmail())
-		userRoutes.GET("/users?offset=1&limit=10", userHandler.GetUserWithPagination())
-		userRoutes.POST("/users", userHandler.CreateUser())
-		userRoutes.PUT("/users/:id", userHandler.UpdateUser())
-		userRoutes.DELETE("/users/:id", userHandler.DeleteUser())
+		Routes.GET("/users", userHandler.GetAllUsers())
+		Routes.GET("/users/:id", userHandler.GetUserByID())
+		Routes.GET("/users&email=<user_email>", userHandler.GetUserByEmail())
+		Routes.GET("/users?offset=1&limit=10", userHandler.GetUserWithPagination())
+		Routes.PUT("/users/:id", userHandler.UpdateUser())
+		Routes.DELETE("/users/:id", userHandler.DeleteUser())
+
+		Routes.GET("/product", productHandler.GetAllProducts())
+		Routes.GET("/product/:id", productHandler.GetProductByID())
+		Routes.GET("/product?name=<product_name>", productHandler.GetProductByName())
+		Routes.GET("/product?offset=1&limit=10", productHandler.GetProductsWithPagination())
+		Routes.PUT("/product/:id", productHandler.UpdateProduct())
+		Routes.DELETE("/product/:id", productHandler.DeleteProduct())
+
+		Routes.GET("/playlists", purchaseHandler.GetAllPurchases())
+		Routes.GET("/playlists/:id", purchaseHandler.GetPurchaseByID())
+		Routes.PUT("/playlists/:id", purchaseHandler.UpdatePurchase())
+		Routes.DELETE("/playlists/:id", purchaseHandler.DeletePurchase())
 	}
 
-	purchaseRoutes := router.Group("/api")
-	purchaseRoutes.Use(middleware.AuthMiddleware())
-	{
-		purchaseRoutes.GET("/purchase", purchaseHandler.GetAllPurchases())
-		purchaseRoutes.GET("/purchase/:id", purchaseHandler.GetPurchaseByID())
-		purchaseRoutes.POST("/purchase", purchaseHandler.CreatePurchase())
-		purchaseRoutes.PUT("/purchase/:id", purchaseHandler.UpdatePurchase())
-		purchaseRoutes.DELETE("/purchase/:id", purchaseHandler.DeletePurchase())
+	if err = router.Run(fmt.Sprintf(":%s", serverCfg.Port)); err != nil {
+		return fmt.Errorf("Failed to start server: %w", err)
 	}
 
-	productRoutes := router.Group("/api")
-	productRoutes.Use(middleware.AuthMiddleware())
-	{
-		productRoutes.GET("/product", productHandler.GetAllProducts())
-		productRoutes.GET("/product/:id", productHandler.GetProductByID())
-		productRoutes.GET("/users?offset=1&limit=10", productHandler.GetProductsWithPagination())
-		productRoutes.POST("/product", productHandler.CreateProduct())
-		productRoutes.PUT("/product/:id", productHandler.UpdateProduct())
-		productRoutes.DELETE("/product/:id", productHandler.DeleteProduct())
-		productRoutes.PATCH("/tracks/:id/like", productHandler.AddLike())
-		productRoutes.DELETE("/tracks/:id/like", productHandler.RemoveLike())
-	}
-
-	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
-	if err := router.Run(serverAddr); err != nil {
-		logger.Error("Failed to start server", slog.Any("error", err))
-		os.Exit(1)
-	}
+	return nil
 }

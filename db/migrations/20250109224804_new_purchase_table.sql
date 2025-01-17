@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS purchases (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL,
     cost FLOAT8 NOT NULL,
-    date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    date TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 -- +goose StatementEnd

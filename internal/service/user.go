@@ -4,22 +4,21 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"vr-shope/internal/models/repositories"
-	"vr-shope/internal/models/services"
+	"vr-shope/internal/models"
 	"vr-shope/internal/repository"
 	"vr-shope/internal/utils"
 	"vr-shope/internal/utils/uuids"
 )
 
 type UserService struct {
-	repo *repository.UserRepository
+	repo *repository.UserStorage
 }
 
-func NewUserService(repo *repository.UserRepository) *UserService {
+func NewUserService(repo *repository.UserStorage) *UserService {
 	return &UserService{repo}
 }
 
-func (s *UserService) CreateUser(ctx context.Context, userServ *services.User) error {
+func (s *UserService) CreateUser(ctx context.Context, userServ *models.User) error {
 	err := utils.ValidateUser(userServ)
 	if err != nil {
 		return err
@@ -46,7 +45,7 @@ func (s *UserService) CreateUser(ctx context.Context, userServ *services.User) e
 
 	userServ.Password = hashedPassword
 
-	userRepo := repositories.User{
+	userRepo := repository.User{
 		ID:          uuids.IntToUUID(int64(userServ.ID)),
 		Login:       userServ.Login,
 		Name:        userServ.Name,
@@ -65,8 +64,8 @@ func (s *UserService) CreateUser(ctx context.Context, userServ *services.User) e
 	return nil
 }
 
-func (s *UserService) Get(ctx context.Context, id int) (*services.User, error) {
-	exists, err := s.repo.ExistsByID(ctx, id)
+func (s *UserService) Get(ctx context.Context, id int) (*models.User, error) {
+	exists, err := s.repo.ExistsByID(ctx, uuids.IntToUUID(int64(id)))
 	if err != nil {
 		return nil, err
 	}
@@ -74,25 +73,52 @@ func (s *UserService) Get(ctx context.Context, id int) (*services.User, error) {
 		return nil, fmt.Errorf("user not found")
 	}
 
-	user, err := s.repo.GetByID(ctx, id)
+	user, err := s.repo.GetByID(ctx, uuids.IntToUUID(int64(id)))
 	if err != nil {
 		return nil, err
 	}
 
-	return user, nil
+	userServ := models.User{
+		ID:              uuids.UUIDToInt(user.ID),
+		Login:           user.Login,
+		Name:            user.Name,
+		LastName:        user.LastName,
+		PhoneNumber:     user.PhoneNumber,
+		Email:           user.Email,
+		WalletUSDT:      user.WalletUSDT,
+		NumberPurchases: user.NumberPurchases,
+	}
+
+	return &userServ, nil
 }
 
-func (s *UserService) GetAll(ctx context.Context) ([]*services.User, error) {
-	users, err := s.repo.GetAll(ctx)
+func (s *UserService) GetAll(ctx context.Context) ([]*models.User, error) {
+	usersRepo, err := s.repo.GetAll(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return users, nil
+	var usersServ []*models.User
+	for _, user := range usersRepo {
+		userServ := models.User{
+			ID:              uuids.UUIDToInt(user.ID),
+			Login:           user.Login,
+			Name:            user.Name,
+			LastName:        user.LastName,
+			PhoneNumber:     user.PhoneNumber,
+			Email:           user.Email,
+			WalletUSDT:      user.WalletUSDT,
+			NumberPurchases: user.NumberPurchases,
+		}
+
+		usersServ = append(usersServ, &userServ)
+	}
+
+	return usersServ, nil
 }
 
-func (s *UserService) Update(ctx context.Context, userServ *services.User) error {
-	exists, err := s.repo.ExistsByID(ctx, userServ.ID)
+func (s *UserService) Update(ctx context.Context, userServ *models.User) error {
+	exists, err := s.repo.ExistsByID(ctx, uuids.IntToUUID(int64(userServ.ID)))
 	if err != nil {
 		return err
 	}
@@ -105,13 +131,24 @@ func (s *UserService) Update(ctx context.Context, userServ *services.User) error
 		return err
 	}
 
-	var email string = userServ.Email
+	email := userServ.Email
 	em := utils.IsValidEmail(email)
 	if !em {
 		return fmt.Errorf("invalid email: %s", email)
 	}
 
-	err = s.repo.Update(ctx, userServ)
+	userRepo := repository.User{
+		ID:              uuids.IntToUUID(int64(userServ.ID)),
+		Login:           userServ.Login,
+		Name:            userServ.Name,
+		LastName:        userServ.LastName,
+		PhoneNumber:     userServ.PhoneNumber,
+		Email:           userServ.Email,
+		WalletUSDT:      userServ.WalletUSDT,
+		NumberPurchases: userServ.NumberPurchases,
+	}
+
+	err = s.repo.Update(ctx, &userRepo)
 	if err != nil {
 		return err
 	}
@@ -120,7 +157,7 @@ func (s *UserService) Update(ctx context.Context, userServ *services.User) error
 }
 
 func (s *UserService) Delete(ctx context.Context, id int) error {
-	exists, err := s.repo.ExistsByID(ctx, id)
+	exists, err := s.repo.ExistsByID(ctx, uuids.IntToUUID(int64(id)))
 	if err != nil {
 		return err
 	}
@@ -128,7 +165,7 @@ func (s *UserService) Delete(ctx context.Context, id int) error {
 		return fmt.Errorf("user not found")
 	}
 
-	err = s.repo.Delete(ctx, id)
+	err = s.repo.Delete(ctx, uuids.IntToUUID(int64(id)))
 	if err != nil {
 		return err
 	}
@@ -136,7 +173,7 @@ func (s *UserService) Delete(ctx context.Context, id int) error {
 	return nil
 }
 
-func (s *UserService) GetByEmail(ctx context.Context, email string) (*services.User, error) {
+func (s *UserService) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	if email == "" {
 		return nil, fmt.Errorf("email is empty")
 	}
@@ -159,7 +196,18 @@ func (s *UserService) GetByEmail(ctx context.Context, email string) (*services.U
 		return nil, err
 	}
 
-	return user, nil
+	userServ := models.User{
+		ID:              uuids.UUIDToInt(user.ID),
+		Login:           user.Login,
+		Name:            user.Name,
+		LastName:        user.LastName,
+		PhoneNumber:     user.PhoneNumber,
+		Email:           user.Email,
+		WalletUSDT:      user.WalletUSDT,
+		NumberPurchases: user.NumberPurchases,
+	}
+
+	return &userServ, nil
 }
 
 func (s *UserService) GetToken(ctx context.Context, login string, password string) (string, error) {
@@ -185,7 +233,7 @@ func (s *UserService) GetToken(ctx context.Context, login string, password strin
 	return token, nil
 }
 
-func (s *UserService) GetUsersWithPagination(ctx context.Context, limit, offset string) ([]*services.User, error) {
+func (s *UserService) GetUsersWithPagination(ctx context.Context, limit, offset string) ([]*models.User, error) {
 	limitInt, err := strconv.Atoi(limit)
 	if err != nil || limitInt < 1 {
 		return nil, err
@@ -201,10 +249,10 @@ func (s *UserService) GetUsersWithPagination(ctx context.Context, limit, offset 
 		return nil, err
 	}
 
-	var users []*services.User
+	var users []*models.User
 	for _, repoUser := range repoUsers {
-		user := &services.User{
-			ID:              int(uuids.UUIDToInt(repoUser.ID)),
+		user := &models.User{
+			ID:              uuids.UUIDToInt(repoUser.ID),
 			Login:           repoUser.Login,
 			Name:            repoUser.Name,
 			LastName:        repoUser.LastName,

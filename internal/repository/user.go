@@ -5,30 +5,19 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"vr-shope/internal/config"
-	"vr-shope/internal/models/repositories"
-	"vr-shope/internal/models/services"
-	"vr-shope/internal/storage/postgresql"
+
+	"github.com/google/uuid"
 )
 
-type UserRepository struct {
+type UserStorage struct {
 	db *sql.DB
 }
 
-func (s *UserRepository) Close() error {
-	return postgresql.CloseConn(s.db)
+func NewUserStorage(db *sql.DB) (*UserStorage, error) {
+	return &UserStorage{db: db}, nil
 }
 
-func NewUserStorage(cfg *config.Config) (*UserRepository, error) {
-	db, err := postgresql.OpenConnection(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return &UserRepository{db: db}, nil
-}
-
-func (r *UserRepository) Create(ctx context.Context, userRepo *repositories.User) error {
+func (r *UserStorage) Create(ctx context.Context, userRepo *User) error {
 	query := `INSERT INTO users (id, login, name, last_name, phone_number, password, email, salt) 
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
 
@@ -49,11 +38,24 @@ func (r *UserRepository) Create(ctx context.Context, userRepo *repositories.User
 	return nil
 }
 
-func (r *UserRepository) GetByID(ctx context.Context, id int) (*services.User, error) {
-	query := `SELECT id, login, name, last_name, phone_number, password, email, wallet_usdt,  
-			  FROM users WHERE id = $1`
+func (r *UserStorage) GetByID(ctx context.Context, id uuid.UUID) (*User, error) {
+	query := `
+	SELECT 
+	    id,
+	    login,
+	    name, 
+	    last_name, 
+	    phone_number, 
+	    password, 
+	    email, 
+	    wallet_usdt,  
+	FROM 
+		users 
+	WHERE 
+	    id = $1
+	    `
 
-	user := &services.User{}
+	user := &User{}
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&user.ID,
 		&user.Login,
@@ -65,7 +67,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id int) (*services.User, e
 		&user.WalletUSDT,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("user not found")
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
@@ -74,7 +76,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id int) (*services.User, e
 	return user, nil
 }
 
-func (r *UserRepository) GetAll(ctx context.Context) ([]*services.User, error) {
+func (r *UserStorage) GetAll(ctx context.Context) ([]*User, error) {
 	query := `SELECT id, login, name, last_name, phone_number, password, email, wallet_usdt FROM users`
 
 	rows, err := r.db.QueryContext(ctx, query)
@@ -83,9 +85,9 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]*services.User, error) {
 	}
 	defer rows.Close()
 
-	var users []*services.User
+	var users []*User
 	for rows.Next() {
-		user := &services.User{}
+		user := &User{}
 		if err := rows.Scan(
 			&user.ID,
 			&user.Login,
@@ -108,11 +110,30 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]*services.User, error) {
 	return users, nil
 }
 
-func (r *UserRepository) Update(ctx context.Context, userServ *services.User) error {
-	query := `UPDATE users SET login = $2, name = $3, last_name = $4, phone_number = $5, password = $6, email = $7, wallet_usdt = $8 WHERE id = $1`
+func (r *UserStorage) Update(ctx context.Context, userServ *User) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
 
-	err := r.db.QueryRowContext(ctx, query,
-		userServ.ID,
+	defer tx.Rollback()
+
+	query := `
+	UPDATE
+    	users 
+	SET
+	    login = $1, 
+	    name = $2,
+	    last_name = $3,
+	    phone_number = $4,
+	    password = $5, 
+	    email = $6, 
+	    wallet_usdt = $7
+	WHERE 
+	    id = $8
+	    `
+
+	err = r.db.QueryRowContext(ctx, query,
 		userServ.Login,
 		userServ.Name,
 		userServ.LastName,
@@ -120,18 +141,30 @@ func (r *UserRepository) Update(ctx context.Context, userServ *services.User) er
 		userServ.Password,
 		userServ.Email,
 		userServ.WalletUSDT,
+		userServ.ID,
 	).Scan(&userServ.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("user not found")
+		return nil
 	}
 	if err != nil {
 		return err
 	}
 
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
 	return nil
 }
 
-func (r *UserRepository) Delete(ctx context.Context, id int) error {
+func (r *UserStorage) Delete(ctx context.Context, id uuid.UUID) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
 	query := `DELETE FROM users WHERE id = $1`
 
 	result, err := r.db.ExecContext(ctx, query, id)
@@ -148,10 +181,14 @@ func (r *UserRepository) Delete(ctx context.Context, id int) error {
 		return fmt.Errorf("user not found")
 	}
 
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
 	return nil
 }
 
-func (r *UserRepository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
+func (r *UserStorage) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	query := `SELECT 1 FROM users WHERE email = $1`
 
 	var exists int
@@ -166,10 +203,10 @@ func (r *UserRepository) ExistsByEmail(ctx context.Context, email string) (bool,
 	return true, nil
 }
 
-func (r *UserRepository) ExistsByID(ctx context.Context, id int) (bool, error) {
+func (r *UserStorage) ExistsByID(ctx context.Context, id uuid.UUID) (bool, error) {
 	query := `SELECT 1 FROM users WHERE id = $1`
 
-	var exists int
+	var exists uuid.UUID
 	err := r.db.QueryRowContext(ctx, query, id).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -181,11 +218,11 @@ func (r *UserRepository) ExistsByID(ctx context.Context, id int) (bool, error) {
 	return true, nil
 }
 
-func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*services.User, error) {
+func (r *UserStorage) GetByEmail(ctx context.Context, email string) (*User, error) {
 	query := `SELECT id, login, name, last_name, phone_number, password, email, wallet_usdt, 
 			  FROM users WHERE id = $1`
 
-	user := &services.User{}
+	user := &User{}
 	err := r.db.QueryRowContext(ctx, query, email).Scan(
 		&user.ID,
 		&user.Login,
@@ -206,8 +243,8 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*service
 	return user, nil
 }
 
-func (s *UserRepository) GetUserByLogin(ctx context.Context, login string) (*repositories.User, error) {
-	user := &repositories.User{}
+func (s *UserStorage) GetUserByLogin(ctx context.Context, login string) (*User, error) {
+	user := &User{}
 
 	const query = `SELECT id, login, password_hash, salt FROM users WHERE login = $1`
 	err := s.db.QueryRowContext(ctx, query, login).Scan(&user.ID, &user.Login, &user.Password, &user.Salt)
@@ -221,7 +258,7 @@ func (s *UserRepository) GetUserByLogin(ctx context.Context, login string) (*rep
 	return user, nil
 }
 
-func (s *UserRepository) GetUsers(ctx context.Context, offset, limit int) ([]*repositories.User, error) {
+func (s *UserStorage) GetUsers(ctx context.Context, offset, limit int) ([]*User, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -238,9 +275,9 @@ func (s *UserRepository) GetUsers(ctx context.Context, offset, limit int) ([]*re
 	}
 	defer rows.Close()
 
-	var users []*repositories.User
+	var users []*User
 	for rows.Next() {
-		user := &repositories.User{}
+		user := &User{}
 		if err := rows.Scan(
 			&user.ID,
 			&user.Login,

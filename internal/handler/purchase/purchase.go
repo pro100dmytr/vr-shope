@@ -1,50 +1,49 @@
 package purchase
 
 import (
-	"github.com/gin-gonic/gin"
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
-	"vr-shope/internal/models/dto"
-	"vr-shope/internal/models/services"
-	"vr-shope/internal/service"
+	"vr-shope/internal/models"
+
+	"github.com/gin-gonic/gin"
 )
 
-type Purchase interface {
-	CreatePurchase() gin.HandlerFunc
-	GetPurchaseByID() gin.HandlerFunc
-	GetAllPurchases() gin.HandlerFunc
-	UpdatePurchase() gin.HandlerFunc
-	DeletePurchase() gin.HandlerFunc
+type Service interface {
+	Create(ctx context.Context, purchase *models.Purchase) error
+	Get(ctx context.Context, id int64) (*models.Purchase, error)
+	GetAll(ctx context.Context) ([]*models.Purchase, error)
+	Update(ctx context.Context, purchase *models.Purchase) error
+	Delete(ctx context.Context, id int64) error
 }
 
-type PurchaseHandler struct {
-	service *service.PurchaseService
+type Handler struct {
+	service Service
 	logger  *slog.Logger
 }
 
-func NewHandler(service *service.PurchaseService, logger *slog.Logger) *PurchaseHandler {
-	return &PurchaseHandler{
+func NewHandler(service Service, logger *slog.Logger) *Handler {
+	return &Handler{
 		service: service,
 		logger:  logger,
 	}
 }
 
-func (h *PurchaseHandler) CreatePurchase() gin.HandlerFunc {
+func (h *Handler) CreatePurchase() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var request dto.PurchaseRequest
+		var request models.PurchaseRequest
 		if err := c.ShouldBindJSON(&request); err != nil {
 			h.logger.Error("failed to bind request", "error", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
 
-		purchase := services.Purchase{
-			ID:     0,
-			UserID: uint64(request.UserID),
-			Cost:   request.Cost,
-			Date:   time.Now(),
+		purchase := models.Purchase{
+			UserID:    uint64(request.UserID),
+			ProductID: uint64(request.ProductID),
+			Date:      time.Now(),
 		}
 
 		err := h.service.Create(c.Request.Context(), &purchase)
@@ -54,7 +53,7 @@ func (h *PurchaseHandler) CreatePurchase() gin.HandlerFunc {
 			return
 		}
 
-		response := dto.PurchaseResponse{
+		response := models.PurchaseResponse{
 			Message: "purchase created",
 		}
 
@@ -63,7 +62,7 @@ func (h *PurchaseHandler) CreatePurchase() gin.HandlerFunc {
 	}
 }
 
-func (h *PurchaseHandler) GetPurchaseByID() gin.HandlerFunc {
+func (h *Handler) GetPurchaseByID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -80,19 +79,22 @@ func (h *PurchaseHandler) GetPurchaseByID() gin.HandlerFunc {
 			return
 		}
 
-		response := dto.PurchaseResponse{
-			Message: "purchase found",
-			ID:      purchase.ID,
-			UserID:  purchase.UserID,
-			Cost:    purchase.Cost,
-			Date:    purchase.Date,
+		response := models.PurchaseResponse{
+			Message:    "purchase found",
+			ID:         purchase.ID,
+			UserID:     purchase.UserID,
+			ProductID:  purchase.ProductID,
+			Date:       purchase.Date,
+			WalletUSDT: purchase.WalletUSDT,
+			Cost:       purchase.Cost,
 		}
+
 		h.logger.Info("purchase found", slog.Any("purchase", response))
 		c.JSON(http.StatusOK, response)
 	}
 }
 
-func (h *PurchaseHandler) GetAllPurchases() gin.HandlerFunc {
+func (h *Handler) GetAllPurchases() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		purchases, err := h.service.GetAll(c.Request.Context())
 		if err != nil {
@@ -101,22 +103,25 @@ func (h *PurchaseHandler) GetAllPurchases() gin.HandlerFunc {
 			return
 		}
 
-		responses := make([]dto.PurchaseResponse, 0, len(purchases))
+		responses := make([]models.PurchaseResponse, 0, len(purchases))
 		for _, purchase := range purchases {
-			responses = append(responses, dto.PurchaseResponse{
-				Message: "get purchase",
-				ID:      purchase.ID,
-				UserID:  purchase.UserID,
-				Cost:    purchase.Cost,
-				Date:    purchase.Date,
+			responses = append(responses, models.PurchaseResponse{
+				Message:    "get purchase",
+				ID:         purchase.ID,
+				UserID:     purchase.UserID,
+				ProductID:  purchase.ProductID,
+				Date:       purchase.Date,
+				WalletUSDT: purchase.WalletUSDT,
+				Cost:       purchase.Cost,
 			})
 		}
+
 		h.logger.Info("get purchases", slog.Any("purchases", responses))
 		c.JSON(http.StatusOK, responses)
 	}
 }
 
-func (h *PurchaseHandler) UpdatePurchase() gin.HandlerFunc {
+func (h *Handler) UpdatePurchase() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -126,18 +131,18 @@ func (h *PurchaseHandler) UpdatePurchase() gin.HandlerFunc {
 			return
 		}
 
-		var request dto.PurchaseRequest
+		var request models.PurchaseRequest
 		if err := c.ShouldBindJSON(&request); err != nil {
 			h.logger.Error("failed to bind request", "error", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
 
-		updateData := services.Purchase{
-			ID:     uint64(id),
-			UserID: uint64(request.UserID),
-			Cost:   request.Cost,
-			Date:   time.Now(),
+		updateData := models.Purchase{
+			ID:        uint64(id),
+			UserID:    uint64(request.UserID),
+			ProductID: uint64(request.ProductID),
+			Date:      time.Now(),
 		}
 
 		err = h.service.Update(c.Request.Context(), &updateData)
@@ -147,7 +152,7 @@ func (h *PurchaseHandler) UpdatePurchase() gin.HandlerFunc {
 			return
 		}
 
-		response := dto.PurchaseResponse{
+		response := models.PurchaseResponse{
 			Message: "purchase updated",
 		}
 		h.logger.Info("purchase updated", slog.Any("purchase", response))
@@ -155,7 +160,7 @@ func (h *PurchaseHandler) UpdatePurchase() gin.HandlerFunc {
 	}
 }
 
-func (h *PurchaseHandler) DeletePurchase() gin.HandlerFunc {
+func (h *Handler) DeletePurchase() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -172,7 +177,7 @@ func (h *PurchaseHandler) DeletePurchase() gin.HandlerFunc {
 			return
 		}
 
-		purchaseResp := dto.PurchaseResponse{
+		purchaseResp := models.PurchaseResponse{
 			Message: "purchase deleted",
 		}
 		h.logger.Info("purchase deleted", slog.Any("purchase", purchaseResp))

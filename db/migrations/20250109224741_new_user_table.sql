@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS users(
     phone_number VARCHAR(20) NOT NULL,
     hashed_password VARCHAR(512) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP,
     wallet_usdt FLOAT8 NOT NULL DEFAULT 0.0,
     number_purchases INT NOT NULL DEFAULT 0,
     salt VARCHAR(255) NOT NULL

@@ -1,40 +1,41 @@
 package user
 
 import (
-	"github.com/gin-gonic/gin"
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"vr-shope/internal/models/dto"
-	"vr-shope/internal/models/services"
-	"vr-shope/internal/service"
+	"vr-shope/internal/models"
+
+	"github.com/gin-gonic/gin"
 )
 
-type User interface {
-	CreateUser() gin.HandlerFunc
-	GetUserByID() gin.HandlerFunc
-	GetAllUsers() gin.HandlerFunc
-	GetUserWithPagination() gin.HandlerFunc
-	UpdateUser() gin.HandlerFunc
-	DeleteUser() gin.HandlerFunc
-	GetByEmail() gin.HandlerFunc
+type Service interface {
+	CreateUser(ctx context.Context, user *models.User) error
+	Get(ctx context.Context, id int) (*models.User, error)
+	GetAll(ctx context.Context) ([]*models.User, error)
+	GetByEmail(ctx context.Context, email string) (*models.User, error)
+	GetUsersWithPagination(ctx context.Context, limit, offset string) ([]*models.User, error)
+	Update(ctx context.Context, user *models.User) error
+	Delete(ctx context.Context, id int) error
+	GetToken(ctx context.Context, login string, password string) (string, error)
 }
 
-type UserHandler struct {
-	service *service.UserService
+type Handler struct {
+	service Service
 	logger  *slog.Logger
 }
 
-func NewHandler(service *service.UserService, logger *slog.Logger) *UserHandler {
-	return &UserHandler{
+func NewHandler(service Service, logger *slog.Logger) *Handler {
+	return &Handler{
 		service: service,
 		logger:  logger,
 	}
 }
 
-func (h *UserHandler) CreateUser() gin.HandlerFunc {
+func (h *Handler) CreateUser() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var userReq dto.UserRequest
+		var userReq models.UserRequest
 
 		if err := c.ShouldBindJSON(&userReq); err != nil {
 			h.logger.Error("Error binding JSON", slog.Any("err", err))
@@ -42,7 +43,7 @@ func (h *UserHandler) CreateUser() gin.HandlerFunc {
 			return
 		}
 
-		userServ := &services.User{
+		userServ := &models.User{
 			Login:       userReq.Login,
 			Name:        userReq.Name,
 			LastName:    userReq.LastName,
@@ -58,7 +59,7 @@ func (h *UserHandler) CreateUser() gin.HandlerFunc {
 			return
 		}
 
-		userResp := dto.UserResponse{
+		userResp := models.UserResponse{
 			Message: "User created",
 		}
 
@@ -67,7 +68,7 @@ func (h *UserHandler) CreateUser() gin.HandlerFunc {
 	}
 }
 
-func (h *UserHandler) GetUserByID() gin.HandlerFunc {
+func (h *Handler) GetUserByID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -84,7 +85,7 @@ func (h *UserHandler) GetUserByID() gin.HandlerFunc {
 			return
 		}
 
-		userResp := dto.UserResponse{
+		userResp := models.UserResponse{
 			Message:         "get user",
 			ID:              user.ID,
 			Login:           user.Login,
@@ -101,7 +102,7 @@ func (h *UserHandler) GetUserByID() gin.HandlerFunc {
 	}
 }
 
-func (h *UserHandler) GetAllUsers() gin.HandlerFunc {
+func (h *Handler) GetAllUsers() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		users, err := h.service.GetAll(c.Request.Context())
 		if err != nil {
@@ -110,9 +111,9 @@ func (h *UserHandler) GetAllUsers() gin.HandlerFunc {
 			return
 		}
 
-		var userResponses []dto.UserResponse
+		var userResponses []models.UserResponse
 		for _, user := range users {
-			userResponses = append(userResponses, dto.UserResponse{
+			userResponses = append(userResponses, models.UserResponse{
 				Message:         "get user",
 				ID:              user.ID,
 				Login:           user.Login,
@@ -130,7 +131,7 @@ func (h *UserHandler) GetAllUsers() gin.HandlerFunc {
 	}
 }
 
-func (h *UserHandler) UpdateUser() gin.HandlerFunc {
+func (h *Handler) UpdateUser() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -140,7 +141,7 @@ func (h *UserHandler) UpdateUser() gin.HandlerFunc {
 			return
 		}
 
-		var userReq dto.UserRequest
+		var userReq models.UserRequest
 
 		if err := c.ShouldBindJSON(&userReq); err != nil {
 			h.logger.Error("Error binding JSON", slog.Any("err", err))
@@ -148,8 +149,8 @@ func (h *UserHandler) UpdateUser() gin.HandlerFunc {
 			return
 		}
 
-		userServ := &services.User{
-			ID:          id,
+		userServ := &models.User{
+			ID:          uint64(id),
 			Login:       userReq.Login,
 			Name:        userReq.Name,
 			LastName:    userReq.LastName,
@@ -166,7 +167,7 @@ func (h *UserHandler) UpdateUser() gin.HandlerFunc {
 			return
 		}
 
-		userResp := dto.UserResponse{
+		userResp := models.UserResponse{
 			Message: "User updated",
 		}
 
@@ -175,7 +176,7 @@ func (h *UserHandler) UpdateUser() gin.HandlerFunc {
 	}
 }
 
-func (h *UserHandler) DeleteUser() gin.HandlerFunc {
+func (h *Handler) DeleteUser() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -194,14 +195,14 @@ func (h *UserHandler) DeleteUser() gin.HandlerFunc {
 
 		h.logger.Info("User deleted", slog.Any("userResp", id))
 
-		userResp := dto.UserResponse{
+		userResp := models.UserResponse{
 			Message: "User deleted",
 		}
 		c.JSON(http.StatusOK, userResp.Message)
 	}
 }
 
-func (h *UserHandler) GetUserByEmail() gin.HandlerFunc {
+func (h *Handler) GetUserByEmail() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		email := c.Query("email")
 
@@ -212,7 +213,7 @@ func (h *UserHandler) GetUserByEmail() gin.HandlerFunc {
 			return
 		}
 
-		userResp := dto.UserResponse{
+		userResp := models.UserResponse{
 			Message:         "get user",
 			ID:              user.ID,
 			Login:           user.Login,
@@ -229,9 +230,9 @@ func (h *UserHandler) GetUserByEmail() gin.HandlerFunc {
 	}
 }
 
-func (h *UserHandler) Login() gin.HandlerFunc {
+func (h *Handler) Login() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var user dto.UserRequest
+		var user models.UserRequest
 
 		if err := c.ShouldBindJSON(&user); err != nil {
 			h.logger.Error("Invalid request", slog.Any("error", err))
@@ -246,7 +247,7 @@ func (h *UserHandler) Login() gin.HandlerFunc {
 			return
 		}
 
-		tokenResponse := dto.TokenResponse{
+		tokenResponse := models.TokenResponse{
 			Token: token,
 		}
 
@@ -255,7 +256,7 @@ func (h *UserHandler) Login() gin.HandlerFunc {
 	}
 }
 
-func (h *UserHandler) GetUserWithPagination() gin.HandlerFunc {
+func (h *Handler) GetUserWithPagination() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		offset := c.DefaultQuery("offset", "0")
 		limit := c.DefaultQuery("limit", "10")
@@ -267,9 +268,9 @@ func (h *UserHandler) GetUserWithPagination() gin.HandlerFunc {
 			return
 		}
 
-		var usersResponse []dto.UserResponse
+		var usersResponse []models.UserResponse
 		for _, user := range users {
-			userResponse := dto.UserResponse{
+			userResponse := models.UserResponse{
 				Message:         "get user",
 				ID:              user.ID,
 				Login:           user.Login,

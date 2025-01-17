@@ -9,3 +9,5 @@ database:
   password: "agario007"
   dbname: "store"
   sslmode: "disable"
+logger:
+  log_level: "debug"

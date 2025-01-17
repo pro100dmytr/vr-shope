@@ -1,41 +1,40 @@
 package product
 
 import (
-	"github.com/gin-gonic/gin"
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"vr-shope/internal/models/dto"
-	"vr-shope/internal/models/services"
-	"vr-shope/internal/service"
+	"vr-shope/internal/models"
+
+	"github.com/gin-gonic/gin"
 )
 
-type Product interface {
-	CreateProduct() gin.HandlerFunc
-	GetProductByID() gin.HandlerFunc
-	GetAllProducts() gin.HandlerFunc
-	UpdateProduct() gin.HandlerFunc
-	DeleteProduct() gin.HandlerFunc
-	AddLike() gin.HandlerFunc
-	RemoveLike() gin.HandlerFunc
-	GetProductsWithPagination() gin.HandlerFunc
+type Service interface {
+	Create(ctx context.Context, product *models.Product) error
+	Get(ctx context.Context, id int) (*models.Product, error)
+	GetAll(ctx context.Context) ([]*models.Product, error)
+	Update(ctx context.Context, product *models.Product) error
+	Delete(ctx context.Context, id int) error
+	GetProductByName(ctx context.Context, name string) ([]*models.Product, error)
+	GetProductsWithPagination(ctx context.Context, limit, offset string) ([]*models.Product, error)
 }
 
-type ProductHandler struct {
-	service *service.ProductService
+type Handler struct {
+	service Service
 	logger  *slog.Logger
 }
 
-func NewHandler(service *service.ProductService, logger *slog.Logger) *ProductHandler {
-	return &ProductHandler{
+func NewHandler(service Service, logger *slog.Logger) *Handler {
+	return &Handler{
 		service: service,
 		logger:  logger,
 	}
 }
 
-func (h *ProductHandler) CreateProduct() gin.HandlerFunc {
+func (h *Handler) CreateProduct() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var productReq dto.ProductRequest
+		var productReq models.ProductRequest
 
 		if err := c.ShouldBindJSON(&productReq); err != nil {
 			h.logger.Error("Error binding JSON", slog.Any("err", err))
@@ -43,7 +42,7 @@ func (h *ProductHandler) CreateProduct() gin.HandlerFunc {
 			return
 		}
 
-		productServ := &services.Product{
+		productServ := &models.Product{
 			Name:          productReq.Name,
 			Cost:          productReq.Cost,
 			QuantityStock: productReq.QuantityStock,
@@ -59,7 +58,7 @@ func (h *ProductHandler) CreateProduct() gin.HandlerFunc {
 			return
 		}
 
-		productResp := dto.ProductResponse{
+		productResp := models.ProductResponse{
 			Message: "product created",
 		}
 
@@ -68,7 +67,7 @@ func (h *ProductHandler) CreateProduct() gin.HandlerFunc {
 	}
 }
 
-func (h *ProductHandler) GetProductByID() gin.HandlerFunc {
+func (h *Handler) GetProductByID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -85,7 +84,7 @@ func (h *ProductHandler) GetProductByID() gin.HandlerFunc {
 			return
 		}
 
-		productResp := dto.ProductResponse{
+		productResp := models.ProductResponse{
 			Message:       "product found",
 			ID:            product.ID,
 			Name:          product.Name,
@@ -101,7 +100,7 @@ func (h *ProductHandler) GetProductByID() gin.HandlerFunc {
 	}
 }
 
-func (h *ProductHandler) GetAllProducts() gin.HandlerFunc {
+func (h *Handler) GetAllProducts() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		products, err := h.service.GetAll(c.Request.Context())
 		if err != nil {
@@ -110,9 +109,9 @@ func (h *ProductHandler) GetAllProducts() gin.HandlerFunc {
 			return
 		}
 
-		var productResponses []dto.ProductResponse
+		var productResponses []models.ProductResponse
 		for _, product := range products {
-			productResponses = append(productResponses, dto.ProductResponse{
+			productResponses = append(productResponses, models.ProductResponse{
 				Message:       "get product",
 				ID:            product.ID,
 				Name:          product.Name,
@@ -129,7 +128,7 @@ func (h *ProductHandler) GetAllProducts() gin.HandlerFunc {
 	}
 }
 
-func (h *ProductHandler) UpdateProduct() gin.HandlerFunc {
+func (h *Handler) UpdateProduct() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -139,7 +138,7 @@ func (h *ProductHandler) UpdateProduct() gin.HandlerFunc {
 			return
 		}
 
-		var productReq dto.ProductRequest
+		var productReq models.ProductRequest
 
 		if err := c.ShouldBindJSON(&productReq); err != nil {
 			h.logger.Error("Error binding JSON", slog.Any("err", err))
@@ -147,7 +146,7 @@ func (h *ProductHandler) UpdateProduct() gin.HandlerFunc {
 			return
 		}
 
-		productServ := &services.Product{
+		productServ := &models.Product{
 			ID:            uint64(id),
 			Name:          productReq.Name,
 			Cost:          productReq.Cost,
@@ -157,30 +156,22 @@ func (h *ProductHandler) UpdateProduct() gin.HandlerFunc {
 			Like:          productReq.Like,
 		}
 
-		product, err := h.service.Update(c.Request.Context(), productServ)
+		err = h.service.Update(c.Request.Context(), productServ)
 		if err != nil {
 			h.logger.Error("Error updating product", slog.Any("err", err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not update product"})
 			return
 		}
 
-		productResp := dto.ProductResponse{
-			Message:       "product updated",
-			ID:            product.ID,
-			Name:          product.Name,
-			Cost:          product.Cost,
-			QuantityStock: product.QuantityStock,
-			Guarantees:    product.Guarantees,
-			Country:       product.Country,
-			Like:          productReq.Like,
+		h.logger.Info("Product updated")
+		response := models.ProductResponse{
+			Message: "product updated",
 		}
-
-		h.logger.Info("Product updated", slog.Any("productResp", productResp))
-		c.JSON(http.StatusOK, productResp)
+		c.JSON(http.StatusOK, response)
 	}
 }
 
-func (h *ProductHandler) DeleteProduct() gin.HandlerFunc {
+func (h *Handler) DeleteProduct() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -198,66 +189,14 @@ func (h *ProductHandler) DeleteProduct() gin.HandlerFunc {
 		}
 
 		h.logger.Info("Product deleted", slog.Any("productResp", id))
-		productResp := dto.ProductResponse{
+		productResp := models.ProductResponse{
 			Message: "product deleted",
 		}
 		c.JSON(http.StatusOK, productResp.Message)
 	}
 }
 
-func (h *ProductHandler) AddLike() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		idStr := c.Param("id")
-		id, err := strconv.Atoi(idStr)
-		if err != nil {
-			h.logger.Error("Invalid ID", slog.Any("error", err))
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
-			return
-		}
-
-		err = h.service.AddLike(c.Request.Context(), id)
-		if err != nil {
-			h.logger.Error("Error adding like", slog.Any("error", err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error adding like"})
-			return
-		}
-
-		message := dto.ProductResponse{
-			Message: "Added like",
-		}
-
-		h.logger.Info("Product added", slog.Any("productResp", message))
-		c.JSON(http.StatusOK, message.Message)
-	}
-}
-
-func (h *ProductHandler) RemoveLike() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		idStr := c.Param("id")
-		id, err := strconv.Atoi(idStr)
-		if err != nil {
-			h.logger.Error("Invalid ID", slog.Any("error", err))
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
-			return
-		}
-
-		err = h.service.RemoveLike(c.Request.Context(), id)
-		if err != nil {
-			h.logger.Error("Error removing like", slog.Any("error", err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error removing like"})
-			return
-		}
-
-		message := dto.ProductResponse{
-			Message: "Delete like",
-		}
-
-		h.logger.Info("Product removed", slog.Any("productResp", message))
-		c.JSON(http.StatusOK, message.Message)
-	}
-}
-
-func (h *ProductHandler) GetProductByName() gin.HandlerFunc {
+func (h *Handler) GetProductByName() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Query("name")
 		products, err := h.service.GetProductByName(c.Request.Context(), name)
@@ -267,9 +206,9 @@ func (h *ProductHandler) GetProductByName() gin.HandlerFunc {
 			return
 		}
 
-		var productsResponse []dto.ProductResponse
+		var productsResponse []models.ProductResponse
 		for _, product := range products {
-			productResponse := dto.ProductResponse{
+			productResponse := models.ProductResponse{
 				Message:       "product by name",
 				ID:            product.ID,
 				Name:          product.Name,
@@ -288,7 +227,7 @@ func (h *ProductHandler) GetProductByName() gin.HandlerFunc {
 	}
 }
 
-func (h *ProductHandler) GetProductsWithPagination() gin.HandlerFunc {
+func (h *Handler) GetProductsWithPagination() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		offset := c.DefaultQuery("offset", "0")
 		limit := c.DefaultQuery("limit", "10")
@@ -300,9 +239,9 @@ func (h *ProductHandler) GetProductsWithPagination() gin.HandlerFunc {
 			return
 		}
 
-		var productsResponse []dto.ProductResponse
+		var productsResponse []models.ProductResponse
 		for _, product := range products {
-			productResponse := dto.ProductResponse{
+			productResponse := models.ProductResponse{
 				Message:       "product by name",
 				ID:            product.ID,
 				Name:          product.Name,

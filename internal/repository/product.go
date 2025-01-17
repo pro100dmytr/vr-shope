@@ -5,30 +5,19 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
 	"github.com/google/uuid"
-	"vr-shope/internal/config"
-	"vr-shope/internal/models/repositories"
-	"vr-shope/internal/storage/postgresql"
 )
 
 type ProductRepository struct {
 	db *sql.DB
 }
 
-func (s *ProductRepository) Close() error {
-	return postgresql.CloseConn(s.db)
-}
-
-func NewProductStorage(cfg *config.Config) (*ProductRepository, error) {
-	db, err := postgresql.OpenConnection(cfg)
-	if err != nil {
-		return nil, err
-	}
-
+func NewProductStorage(db *sql.DB) (*ProductRepository, error) {
 	return &ProductRepository{db: db}, nil
 }
 
-func (r *ProductRepository) Create(ctx context.Context, product *repositories.Product) error {
+func (r *ProductRepository) Create(ctx context.Context, product *Product) error {
 	query := `
 		INSERT INTO products (id, name, cost, quantity_stock, guarantees, country)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -52,7 +41,7 @@ func (r *ProductRepository) Create(ctx context.Context, product *repositories.Pr
 	return nil
 }
 
-func (r *ProductRepository) Get(ctx context.Context, id uuid.UUID) (*repositories.Product, error) {
+func (r *ProductRepository) Get(ctx context.Context, id uuid.UUID) (*Product, error) {
 	query := `
 		SELECT id, name, cost, quantity_stock, guarantees, country, likes
 		FROM products
@@ -61,7 +50,7 @@ func (r *ProductRepository) Get(ctx context.Context, id uuid.UUID) (*repositorie
 
 	row := r.db.QueryRowContext(ctx, query, id)
 
-	var product repositories.Product
+	var product Product
 	err := row.Scan(
 		&product.ID,
 		&product.Name,
@@ -81,7 +70,7 @@ func (r *ProductRepository) Get(ctx context.Context, id uuid.UUID) (*repositorie
 	return &product, nil
 }
 
-func (r *ProductRepository) GetAll(ctx context.Context) ([]*repositories.Product, error) {
+func (r *ProductRepository) GetAll(ctx context.Context) ([]*Product, error) {
 	query := `
 		SELECT id, name, cost, quantity_stock, guarantees, country, likes
 		FROM products
@@ -93,9 +82,9 @@ func (r *ProductRepository) GetAll(ctx context.Context) ([]*repositories.Product
 	}
 	defer rows.Close()
 
-	var products []*repositories.Product
+	var products []*Product
 	for rows.Next() {
-		var product repositories.Product
+		var product Product
 		err := rows.Scan(
 			&product.ID,
 			&product.Name,
@@ -114,7 +103,14 @@ func (r *ProductRepository) GetAll(ctx context.Context) ([]*repositories.Product
 	return products, nil
 }
 
-func (r *ProductRepository) Update(ctx context.Context, product *repositories.Product) (*repositories.Product, error) {
+func (r *ProductRepository) Update(ctx context.Context, product *Product) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
 	query := `
 		UPDATE products
 		SET name = $2, cost = $3, quantity_stock = $4, guarantees = $5, country = $6, likes = $7
@@ -133,22 +129,33 @@ func (r *ProductRepository) Update(ctx context.Context, product *repositories.Pr
 		product.Like,
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if rowsAffected == 0 {
-		return nil, fmt.Errorf("no rows were updated")
+		return fmt.Errorf("no rows were updated")
 	}
 
-	return product, nil
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 func (r *ProductRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
 	query := `
 		DELETE FROM products
 		WHERE id = $1
@@ -166,6 +173,10 @@ func (r *ProductRepository) Delete(ctx context.Context, id uuid.UUID) error {
 
 	if rowsAffected == 0 {
 		return fmt.Errorf("no rows were deleted")
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
@@ -255,7 +266,7 @@ func (s *ProductRepository) RemoveLike(ctx context.Context, id uuid.UUID) error 
 	return nil
 }
 
-func (s *ProductRepository) GetForName(ctx context.Context, name string) ([]*repositories.Product, error) {
+func (s *ProductRepository) GetForName(ctx context.Context, name string) ([]*Product, error) {
 	const query = `SELECT * FROM products WHERE name = $1`
 	rows, err := s.db.QueryContext(ctx, query, name)
 	if err != nil {
@@ -263,9 +274,9 @@ func (s *ProductRepository) GetForName(ctx context.Context, name string) ([]*rep
 	}
 	defer rows.Close()
 
-	var products []*repositories.Product
+	var products []*Product
 	for rows.Next() {
-		product := &repositories.Product{}
+		product := &Product{}
 		if err := rows.Scan(
 			product.ID,
 			product.Name,
@@ -283,7 +294,7 @@ func (s *ProductRepository) GetForName(ctx context.Context, name string) ([]*rep
 	return products, rows.Err()
 }
 
-func (s *ProductRepository) GetProducts(ctx context.Context, offset, limit int) ([]*repositories.Product, error) {
+func (s *ProductRepository) GetProducts(ctx context.Context, offset, limit int) ([]*Product, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -292,7 +303,16 @@ func (s *ProductRepository) GetProducts(ctx context.Context, offset, limit int) 
 	defer tx.Rollback()
 
 	const query = `
-        SELECT id, name, cost, quantityStock, guarantees, country, likes FROM users OFFSET $1 LIMIT $2`
+        SELECT
+            id,
+            name, 
+            cost, 
+            quantityStock, 
+            guarantees,
+            country, 
+            likes 
+        FROM 
+            users OFFSET $1 LIMIT $2`
 
 	rows, err := s.db.QueryContext(ctx, query, offset, limit)
 	if err != nil {
@@ -300,9 +320,9 @@ func (s *ProductRepository) GetProducts(ctx context.Context, offset, limit int) 
 	}
 	defer rows.Close()
 
-	var products []*repositories.Product
+	var products []*Product
 	for rows.Next() {
-		product := &repositories.Product{}
+		product := &Product{}
 		if err := rows.Scan(
 			&product.ID,
 			&product.Name,

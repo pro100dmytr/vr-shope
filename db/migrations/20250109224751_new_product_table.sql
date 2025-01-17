@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS products(
     name VARCHAR(255) NOT NULL,
     cost FLOAT8 NOT NULL,
     quantity_stock INT NOT NULL DEFAULT 0,
-    guarantees TIMESTAMP NOT NULL,
+    guarantees TIMESTAMP,
     country VARCHAR(255) NOT NULL,
     likes INT NOT NULL DEFAULT 0
 );

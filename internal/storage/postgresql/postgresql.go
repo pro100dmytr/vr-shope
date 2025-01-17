@@ -3,21 +3,21 @@ package postgresql
 import (
 	"database/sql"
 	"fmt"
+	"vr-shope/internal/config"
+
 	_ "github.com/lib/pq"
 	"github.com/pressly/goose/v3"
-	"log/slog"
-	"vr-shope/internal/config"
 )
 
-func OpenConnection(cfg *config.Config) (*sql.DB, error) {
+func OpenConnection(cfg *config.DBConfig) (*sql.DB, error) {
 	connStr := fmt.Sprintf(
 		"host=%s port=%s user=%s dbname=%s password=%s sslmode=%s",
-		cfg.Database.Host,
-		cfg.Database.Port,
-		cfg.Database.User,
-		cfg.Database.DBName,
-		cfg.Database.Password,
-		cfg.Database.SSLMode,
+		cfg.Host,
+		cfg.Port,
+		cfg.User,
+		cfg.DBName,
+		cfg.Password,
+		cfg.SSLMode,
 	)
 
 	db, err := sql.Open("postgres", connStr)
@@ -31,15 +31,8 @@ func OpenConnection(cfg *config.Config) (*sql.DB, error) {
 
 	err = goose.Up(db, "db\\migrations")
 	if err != nil {
-		slog.Error("Failed to run migrations", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	return db, nil
-}
-func CloseConn(db *sql.DB) error {
-	if db == nil {
-		return nil
-	}
-	return db.Close()
 }
